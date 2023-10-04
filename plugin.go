@@ -89,8 +89,6 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 	}
 	userId := parsedUUID.String()
 	v, ok := userUsageLimit[userId]
-	fmt.Println("userId:", userId)
-	fmt.Println("Map:", userUsageLimit)
 	if !ok {
 		a.RateLimitPlan(userId)
 	} else {
@@ -104,7 +102,6 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 	}
 
 	fmt.Println(userUsageLimit)
-	req.Header.Set("X-UUId", uuid.NewString())
 	a.next.ServeHTTP(rw, req)
 }
 
@@ -118,8 +115,6 @@ func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
 	httpReq.Header.Set("X-Api-Key", a.apiKey)
 
 	httpRes, err := a.client.Do(httpReq)
-	fmt.Println("response,", httpRes)
-	fmt.Println("err,", httpRes)
 	if err != nil {
 		log.Printf("HTTPDOERRPlan: %s", err.Error())
 		return err
@@ -128,10 +123,8 @@ func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
 	if httpRes.StatusCode != http.StatusOK {
 		return err
 	}
-	fmt.Println("httpRes:......", httpReq.Body)
 
 	body, err := ioutil.ReadAll(httpRes.Body)
-	fmt.Println("body:......", body)
 
 	if err != nil {
 		log.Printf("PlanPasreBody: %s", err.Error())
