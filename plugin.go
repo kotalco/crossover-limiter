@@ -8,15 +8,15 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
-	"strings"
 	"time"
 )
 
 const (
 	defaultTimeout               = 5
 	defaultAPIKEY                = "c499a9cf54b4f5b8281762802b55462a8d020c835e6795ce4d1b6d268f6e32a5"
-	defaultRateLimitPlanLimitURL = "http://localhost:8083/api/v1/subscriptions/:userId/request-limit"
+	defaultRateLimitPlanLimitURL = "http://localhost:8083/api/v1/subscriptions/request-limit"
 	defaultGetRequestIdPattern   = "([a-z0-9]{42})"
 )
 
@@ -106,7 +106,16 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 }
 
 func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
-	httpReq, err := http.NewRequest(http.MethodGet, strings.Replace(a.rateLimitPlanLimitUrl, ":userId", userId, 1), nil)
+	requestUrl, err := url.Parse(a.rateLimitPlanLimitUrl)
+	if err != nil {
+		log.Printf("HTTPCALLERERRPlan: %s", err.Error())
+		return err
+	}
+	queryParams := url.Values{}
+	queryParams.Set("userId", userId)
+	requestUrl.RawQuery = queryParams.Encode()
+	fmt.Println("RequestLimitUrl", requestUrl.String())
+	httpReq, err := http.NewRequest(http.MethodGet, requestUrl.String(), nil)
 	if err != nil {
 		log.Printf("HTTPCALLERERRPlan: %s", err.Error())
 		return err
