@@ -106,9 +106,10 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 }
 
 func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
+	fmt.Println("RateLimitPlanBaseURL:", a.rateLimitPlanLimitUrl)
 	requestUrl, err := url.Parse(a.rateLimitPlanLimitUrl)
 	if err != nil {
-		log.Printf("HTTPCALLERERRPlan: %s", err.Error())
+		fmt.Println("HTTPCALLERERRPlan:", err.Error())
 		return err
 	}
 	queryParams := url.Values{}
@@ -117,7 +118,7 @@ func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
 	fmt.Println("RequestLimitUrl", requestUrl.String())
 	httpReq, err := http.NewRequest(http.MethodGet, requestUrl.String(), nil)
 	if err != nil {
-		log.Printf("HTTPCALLERERRPlan: %s", err.Error())
+		fmt.Println("HTTPCALLERERRPlan:", err.Error())
 		return err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
