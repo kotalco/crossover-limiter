@@ -2,13 +2,9 @@ package crossover_limiter
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
-	"io/ioutil"
-	"log"
 	"net/http"
-	"net/url"
 	"regexp"
 	"time"
 )
@@ -106,52 +102,52 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 }
 
 func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
-	fmt.Println("RateLimitPlanBaseURL:", a.rateLimitPlanLimitUrl)
-	requestUrl, err := url.Parse(a.rateLimitPlanLimitUrl)
-	if err != nil {
-		fmt.Println("HTTPCALLERERRPlan:", err.Error())
-		return err
-	}
-	queryParams := url.Values{}
-	queryParams.Set("userId", userId)
-	requestUrl.RawQuery = queryParams.Encode()
-	fmt.Println("RequestLimitUrl", requestUrl.String())
-	httpReq, err := http.NewRequest(http.MethodGet, requestUrl.String(), nil)
-	if err != nil {
-		fmt.Println("HTTPCALLERERRPlan:", err.Error())
-		return err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Api-Key", a.apiKey)
-
-	httpRes, err := a.client.Do(httpReq)
-	if err != nil {
-		log.Printf("HTTPDOERRPlan: %s", err.Error())
-		return err
-	}
-
-	if httpRes.StatusCode != http.StatusOK {
-		return err
-	}
-
-	body, err := ioutil.ReadAll(httpRes.Body)
-
-	if err != nil {
-		log.Printf("PlanPasreBody: %s", err.Error())
-		return err
-	}
-
-	var response map[string]map[string]int
-	err = json.Unmarshal(body, &response)
-	if err != nil {
-		log.Printf("UNMARSHAERPlan: %s", err.Error())
-		return err
-	}
+	//fmt.Println("RateLimitPlanBaseURL:", a.rateLimitPlanLimitUrl)
+	//requestUrl, err := url.Parse(a.rateLimitPlanLimitUrl)
+	//if err != nil {
+	//	fmt.Println("HTTPCALLERERRPlan:", err.Error())
+	//	return err
+	//}
+	//queryParams := url.Values{}
+	//queryParams.Set("userId", userId)
+	//requestUrl.RawQuery = queryParams.Encode()
+	//fmt.Println("RequestLimitUrl", requestUrl.String())
+	//httpReq, err := http.NewRequest(http.MethodGet, requestUrl.String(), nil)
+	//if err != nil {
+	//	fmt.Println("HTTPCALLERERRPlan:", err.Error())
+	//	return err
+	//}
+	//httpReq.Header.Set("Content-Type", "application/json")
+	//httpReq.Header.Set("X-Api-Key", a.apiKey)
+	//
+	//httpRes, err := a.client.Do(httpReq)
+	//if err != nil {
+	//	log.Printf("HTTPDOERRPlan: %s", err.Error())
+	//	return err
+	//}
+	//
+	//if httpRes.StatusCode != http.StatusOK {
+	//	return err
+	//}
+	//
+	//body, err := ioutil.ReadAll(httpRes.Body)
+	//
+	//if err != nil {
+	//	log.Printf("PlanPasreBody: %s", err.Error())
+	//	return err
+	//}
+	//
+	//var response map[string]map[string]int
+	//err = json.Unmarshal(body, &response)
+	//if err != nil {
+	//	log.Printf("UNMARSHAERPlan: %s", err.Error())
+	//	return err
+	//}
 
 	//reset usage and limit
 	userUsageLimit[userId] = limitUsage{
 		usage:     0,
-		planLimit: int64(response["data"]["request_limit"]),
+		planLimit: 10,
 	}
 
 	return nil
