@@ -3,6 +3,7 @@ package crossover_limiter
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"time"
@@ -77,7 +78,7 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 	requestId := requestKey(a.requestIdPattern, req.URL.Path)
 	//parsedUUID, err := uuid.Parse(requestId[10:])
 
-	fmt.Println("LIMITER_REQUEST_ID....", requestId)
+	log.Printf("LIMITER_REQUEST_ID....%s", requestId)
 	//if err != nil {
 	//	rw.WriteHeader(http.StatusBadRequest)
 	//	// Write the error message to the response writer
@@ -168,8 +169,8 @@ func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
 //		}()
 //	}
 func requestKey(pattern string, path string) string {
-	fmt.Println("LIMITER_Path....", path)
-	fmt.Println("LIMITER_Pattern....", pattern)
+	log.Printf("LIMITER_Path....%s", path)
+	fmt.Printf("LIMITER_Pattern....%s", pattern)
 
 	// Compile the regular expression
 	re := regexp.MustCompile(pattern)
