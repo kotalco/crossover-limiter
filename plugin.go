@@ -79,6 +79,9 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 	//parsedUUID, err := uuid.Parse(requestId[10:])
 
 	log.Printf("LIMITER_REQUEST_ID....%s", requestId)
+	log.Printf("LimitterAPIKey....%s", a.apiKey)
+	log.Printf("limitterRequestIdPattern....%s", a.requestIdPattern)
+	log.Printf("limitterPlanLimitUrl....%s", a.rateLimitPlanLimitUrl)
 	//if err != nil {
 	//	rw.WriteHeader(http.StatusBadRequest)
 	//	// Write the error message to the response writer
@@ -170,7 +173,7 @@ func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
 //	}
 func requestKey(pattern string, path string) string {
 	log.Printf("LIMITER_Path....%s", path)
-	fmt.Printf("LIMITER_Pattern....%s", pattern)
+	log.Printf("LIMITER_Pattern....%s", pattern)
 
 	// Compile the regular expression
 	re := regexp.MustCompile(pattern)
