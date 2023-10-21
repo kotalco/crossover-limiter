@@ -3,7 +3,6 @@ package crossover_limiter
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
 	"net/http"
 	"regexp"
 	"time"
@@ -70,34 +69,36 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		rateLimitPlanLimitUrl: config.RateLimitPlanLimitURL,
 		apiKey:                config.APIKey,
 	}
-	requestHandler.Ticking()
+	//requestHandler.Ticking()
 	return requestHandler, nil
 }
 
 func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	requestId := requestKey(a.requestIdPattern, req.URL.Path)
-	parsedUUID, err := uuid.Parse(requestId[10:])
-	if err != nil {
-		rw.WriteHeader(http.StatusBadRequest)
-		// Write the error message to the response writer
-		rw.Write([]byte("invalid requestId"))
-		return
-	}
-	userId := parsedUUID.String()
-	v, ok := userUsageLimit[userId]
-	if !ok {
-		a.RateLimitPlan(userId)
-	} else {
-		if v.usage > v.planLimit {
-			rw.WriteHeader(http.StatusTooManyRequests)
-			rw.Write([]byte("too many requests"))
-			return
-		}
-		v.usage++
-		userUsageLimit[userId] = v
-	}
+	//parsedUUID, err := uuid.Parse(requestId[10:])
 
-	fmt.Println(userUsageLimit)
+	fmt.Println("LIMITER_REQUEST_ID....", requestId)
+	//if err != nil {
+	//	rw.WriteHeader(http.StatusBadRequest)
+	//	// Write the error message to the response writer
+	//	rw.Write([]byte("invalid requestId"))
+	//	return
+	//}
+	//userId := parsedUUID.String()
+	//v, ok := userUsageLimit[userId]
+	//if !ok {
+	//	a.RateLimitPlan(userId)
+	//} else {
+	//	if v.usage > v.planLimit {
+	//		rw.WriteHeader(http.StatusTooManyRequests)
+	//		rw.Write([]byte("too many requests"))
+	//		return
+	//	}
+	//	v.usage++
+	//	userUsageLimit[userId] = v
+	//}
+	//
+	//fmt.Println(userUsageLimit)
 	a.next.ServeHTTP(rw, req)
 }
 
@@ -153,19 +154,19 @@ func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
 	return nil
 }
 
-func (a *RequestCrossoverLimiter) Ticking() {
-	ticker := time.NewTicker(1 * time.Minute)
-	go func() {
-		for {
-			fmt.Println("ticking..........")
-			<-ticker.C
-			for k, _ := range userUsageLimit {
-				a.RateLimitPlan(k)
-			}
-
-		}
-	}()
-}
+//func (a *RequestCrossoverLimiter) Ticking() {
+//	ticker := time.NewTicker(1 * time.Minute)
+//	go func() {
+//		for {
+//			fmt.Println("ticking..........")
+//			<-ticker.C
+//			for k, _ := range userUsageLimit {
+//				a.RateLimitPlan(k)
+//			}
+//
+//		}
+//	}()
+//}
 func requestKey(pattern string, path string) string {
 	// Compile the regular expression
 	re := regexp.MustCompile(pattern)
