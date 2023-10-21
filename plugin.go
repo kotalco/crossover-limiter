@@ -154,20 +154,23 @@ func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
 	return nil
 }
 
-//func (a *RequestCrossoverLimiter) Ticking() {
-//	ticker := time.NewTicker(1 * time.Minute)
-//	go func() {
-//		for {
-//			fmt.Println("ticking..........")
-//			<-ticker.C
-//			for k, _ := range userUsageLimit {
-//				a.RateLimitPlan(k)
-//			}
+//	func (a *RequestCrossoverLimiter) Ticking() {
+//		ticker := time.NewTicker(1 * time.Minute)
+//		go func() {
+//			for {
+//				fmt.Println("ticking..........")
+//				<-ticker.C
+//				for k, _ := range userUsageLimit {
+//					a.RateLimitPlan(k)
+//				}
 //
-//		}
-//	}()
-//}
+//			}
+//		}()
+//	}
 func requestKey(pattern string, path string) string {
+	fmt.Println("LIMITER_Path....", path)
+	fmt.Println("LIMITER_Pattern....", pattern)
+
 	// Compile the regular expression
 	re := regexp.MustCompile(pattern)
 	// Find the first match of the pattern in the URL Path
