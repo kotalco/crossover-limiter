@@ -2,9 +2,13 @@ package crossover_limiter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"time"
 )
@@ -70,107 +74,110 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		rateLimitPlanLimitUrl: config.RateLimitPlanLimitURL,
 		apiKey:                config.APIKey,
 	}
-	//requestHandler.Ticking()
+	requestHandler.Ticking()
 	return requestHandler, nil
 }
 
 func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	requestId := requestKey(a.requestIdPattern, req.URL.Path)
-	//parsedUUID, err := uuid.Parse(requestId[10:])
+	parsedUUID, err := uuid.Parse(requestId[10:])
 
 	log.Printf("LIMITER_REQUEST_ID....%s", requestId)
 	log.Printf("LimitterAPIKey....%s", a.apiKey)
 	log.Printf("limitterRequestIdPattern....%s", a.requestIdPattern)
 	log.Printf("limitterPlanLimitUrl....%s", a.rateLimitPlanLimitUrl)
-	//if err != nil {
-	//	rw.WriteHeader(http.StatusBadRequest)
-	//	// Write the error message to the response writer
-	//	rw.Write([]byte("invalid requestId"))
-	//	return
-	//}
-	//userId := parsedUUID.String()
-	//v, ok := userUsageLimit[userId]
-	//if !ok {
-	//	a.RateLimitPlan(userId)
-	//} else {
-	//	if v.usage > v.planLimit {
-	//		rw.WriteHeader(http.StatusTooManyRequests)
-	//		rw.Write([]byte("too many requests"))
-	//		return
-	//	}
-	//	v.usage++
-	//	userUsageLimit[userId] = v
-	//}
-	//
-	//fmt.Println(userUsageLimit)
+	if err != nil {
+		rw.WriteHeader(http.StatusBadRequest)
+		// Write the error message to the response writer
+		rw.Write([]byte("invalid requestId"))
+		return
+	}
+	userId := parsedUUID.String()
+	v, ok := userUsageLimit[userId]
+	if !ok {
+		a.RateLimitPlan(userId)
+	} else {
+		if v.usage > v.planLimit {
+			rw.WriteHeader(http.StatusTooManyRequests)
+			rw.Write([]byte("too many requests"))
+			return
+		}
+		v.usage++
+		userUsageLimit[userId] = v
+	}
+
+	log.Println("LimiterUsageLimit: ", userUsageLimit)
 	a.next.ServeHTTP(rw, req)
 }
 
 func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
-	//fmt.Println("RateLimitPlanBaseURL:", a.rateLimitPlanLimitUrl)
-	//requestUrl, err := url.Parse(a.rateLimitPlanLimitUrl)
-	//if err != nil {
-	//	fmt.Println("HTTPCALLERERRPlan:", err.Error())
-	//	return err
-	//}
-	//queryParams := url.Values{}
-	//queryParams.Set("userId", userId)
-	//requestUrl.RawQuery = queryParams.Encode()
-	//fmt.Println("RequestLimitUrl", requestUrl.String())
-	//httpReq, err := http.NewRequest(http.MethodGet, requestUrl.String(), nil)
-	//if err != nil {
-	//	fmt.Println("HTTPCALLERERRPlan:", err.Error())
-	//	return err
-	//}
-	//httpReq.Header.Set("Content-Type", "application/json")
-	//httpReq.Header.Set("X-Api-Key", a.apiKey)
-	//
-	//httpRes, err := a.client.Do(httpReq)
-	//if err != nil {
-	//	log.Printf("HTTPDOERRPlan: %s", err.Error())
-	//	return err
-	//}
-	//
-	//if httpRes.StatusCode != http.StatusOK {
-	//	return err
-	//}
-	//
-	//body, err := ioutil.ReadAll(httpRes.Body)
-	//
-	//if err != nil {
-	//	log.Printf("PlanPasreBody: %s", err.Error())
-	//	return err
-	//}
-	//
-	//var response map[string]map[string]int
-	//err = json.Unmarshal(body, &response)
-	//if err != nil {
-	//	log.Printf("UNMARSHAERPlan: %s", err.Error())
-	//	return err
-	//}
+	log.Println("RateLimitPlanBaseURL:", a.rateLimitPlanLimitUrl)
+	requestUrl, err := url.Parse(a.rateLimitPlanLimitUrl)
+	if err != nil {
+		log.Println("HTTPCALLERERRPlan:", err.Error())
+		return err
+	}
+	queryParams := url.Values{}
+	queryParams.Set("userId", userId)
+	requestUrl.RawQuery = queryParams.Encode()
+	log.Printf("RequestLimitUrl: %s", requestUrl.String())
+	httpReq, err := http.NewRequest(http.MethodGet, requestUrl.String(), nil)
+	if err != nil {
+		fmt.Println("HTTPCALLERERRPlan:", err.Error())
+		return err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-Api-Key", a.apiKey)
+
+	httpRes, err := a.client.Do(httpReq)
+	if err != nil {
+		log.Printf("HTTPDOERRPlan: %s", err.Error())
+		return err
+	}
+
+	if httpRes.StatusCode != http.StatusOK {
+		return err
+	}
+
+	body, err := ioutil.ReadAll(httpRes.Body)
+
+	if err != nil {
+		log.Printf("PlanPasreBody: %s", err.Error())
+		return err
+	}
+
+	var response map[string]map[string]int
+	err = json.Unmarshal(body, &response)
+	if err != nil {
+		log.Printf("UNMARSHAERPlan: %s", err.Error())
+		return err
+	}
+	log.Println(response)
+	log.Printf("ResponseRequestLimiter: %d", int64(response["data"]["request_limit"]))
 
 	//reset usage and limit
 	userUsageLimit[userId] = limitUsage{
 		usage:     0,
-		planLimit: 10,
+		planLimit: int64(response["data"]["request_limit"]),
 	}
+	log.Println(userUsageLimit)
 
 	return nil
 }
 
-//	func (a *RequestCrossoverLimiter) Ticking() {
-//		ticker := time.NewTicker(1 * time.Minute)
-//		go func() {
-//			for {
-//				fmt.Println("ticking..........")
-//				<-ticker.C
-//				for k, _ := range userUsageLimit {
-//					a.RateLimitPlan(k)
-//				}
-//
-//			}
-//		}()
-//	}
+func (a *RequestCrossoverLimiter) Ticking() {
+	ticker := time.NewTicker(1 * time.Minute)
+	go func() {
+		for {
+			fmt.Println("ticking..........")
+			<-ticker.C
+			for k, _ := range userUsageLimit {
+				a.RateLimitPlan(k)
+			}
+
+		}
+	}()
+}
 func requestKey(pattern string, path string) string {
 	log.Printf("LIMITER_Path....%s", path)
 	log.Printf("LIMITER_Pattern....%s", pattern)
