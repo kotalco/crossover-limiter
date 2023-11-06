@@ -81,11 +81,6 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	requestId := requestKey(a.requestIdPattern, req.URL.Path)
 	parsedUUID, err := uuid.Parse(requestId[10:])
-
-	log.Printf("LIMITER_REQUEST_ID....%s", requestId)
-	log.Printf("LimitterAPIKey....%s", a.apiKey)
-	log.Printf("limitterRequestIdPattern....%s", a.requestIdPattern)
-	log.Printf("limitterPlanLimitUrl....%s", a.rateLimitPlanLimitUrl)
 	if err != nil {
 		rw.WriteHeader(http.StatusBadRequest)
 		// Write the error message to the response writer
@@ -106,12 +101,10 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 		userUsageLimit[userId] = v
 	}
 
-	log.Println("LimiterUsageLimit: ", userUsageLimit)
 	a.next.ServeHTTP(rw, req)
 }
 
 func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
-	log.Println("RateLimitPlanBaseURL:", a.rateLimitPlanLimitUrl)
 	requestUrl, err := url.Parse(a.rateLimitPlanLimitUrl)
 	if err != nil {
 		log.Println("HTTPCALLERERRPlan:", err.Error())
@@ -120,7 +113,6 @@ func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
 	queryParams := url.Values{}
 	queryParams.Set("userId", userId)
 	requestUrl.RawQuery = queryParams.Encode()
-	log.Printf("RequestLimitUrl: %s", requestUrl.String())
 	httpReq, err := http.NewRequest(http.MethodGet, requestUrl.String(), nil)
 	if err != nil {
 		fmt.Println("HTTPCALLERERRPlan:", err.Error())
@@ -152,8 +144,6 @@ func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
 		log.Printf("UNMARSHAERPlan: %s", err.Error())
 		return err
 	}
-	log.Println(response)
-	log.Printf("ResponseRequestLimiter: %d", int64(response["data"]["request_limit"]))
 
 	//reset usage and limit
 	userUsageLimit[userId] = limitUsage{
@@ -169,7 +159,6 @@ func (a *RequestCrossoverLimiter) Ticking() {
 	ticker := time.NewTicker(1 * time.Minute)
 	go func() {
 		for {
-			fmt.Println("ticking..........")
 			<-ticker.C
 			for k, _ := range userUsageLimit {
 				a.RateLimitPlan(k)
@@ -179,9 +168,6 @@ func (a *RequestCrossoverLimiter) Ticking() {
 	}()
 }
 func requestKey(pattern string, path string) string {
-	log.Printf("LIMITER_Path....%s", path)
-	log.Printf("LIMITER_Pattern....%s", pattern)
-
 	// Compile the regular expression
 	re := regexp.MustCompile(pattern)
 	// Find the first match of the pattern in the URL Path
