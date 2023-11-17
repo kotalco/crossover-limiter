@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
+	"golang.org/x/time/rate"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -20,12 +21,15 @@ const (
 	defaultGetRequestIdPattern   = "([a-z0-9]{42})"
 )
 
-type limitUsage struct {
-	planLimit int64
-	usage     int64
+type client struct {
+	limiter      *rate.Limiter
+	lastSeen     time.Time
+	requestLimit int
 }
 
-var userUsageLimit = map[string]limitUsage{}
+var (
+	clients = make(map[string]*client)
+)
 
 // Config holds configuration to passed to the plugin
 type Config struct {
@@ -74,41 +78,64 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		rateLimitPlanLimitUrl: config.RateLimitPlanLimitURL,
 		apiKey:                config.APIKey,
 	}
-	requestHandler.Ticking()
+	go requestHandler.cleanUp()
 	return requestHandler, nil
 }
 
 func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	requestId := requestKey(a.requestIdPattern, req.URL.Path)
-	parsedUUID, err := uuid.Parse(requestId[10:])
-	if err != nil {
+	userId := a.extractUserID(req)
+	if userId == "" {
 		rw.WriteHeader(http.StatusBadRequest)
 		// Write the error message to the response writer
 		rw.Write([]byte("invalid requestId"))
 		return
 	}
-	userId := parsedUUID.String()
-	v, ok := userUsageLimit[userId]
-	if !ok {
-		a.RateLimitPlan(userId)
-	} else {
-		if v.usage > v.planLimit {
-			rw.WriteHeader(http.StatusTooManyRequests)
-			rw.Write([]byte("too many requests"))
-			return
-		}
-		v.usage++
-		userUsageLimit[userId] = v
+	if !a.limit(userId, a.getRateLimitPlan(userId)) {
+		rw.WriteHeader(http.StatusTooManyRequests)
+		rw.Write([]byte("too many requests"))
+		return
 	}
-
 	a.next.ServeHTTP(rw, req)
 }
 
-func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
+// extractUserID extract user id from the request
+func (a *RequestCrossoverLimiter) extractUserID(req *http.Request) string {
+	// Find the first match of the pattern in the URL Path
+	match := regexp.MustCompile(a.requestIdPattern).FindStringSubmatch(req.URL.Path)
+	if len(match) == 0 {
+		return ""
+	}
+	parsedUUID, err := uuid.Parse(match[0][10:])
+	if err != nil {
+		return ""
+	}
+	return parsedUUID.String()
+}
+
+// getRateLimitPlan gets the rate limit plan for a user.
+func (a *RequestCrossoverLimiter) getRateLimitPlan(userId string) int {
+	if _, found := clients[userId]; !found {
+		a.setRateLimitPlan(userId)
+	}
+	return clients[userId].requestLimit
+}
+
+// setRateLimitPlan fetches and sets the rate limit plan for a user.
+func (a *RequestCrossoverLimiter) setRateLimitPlan(userId string) {
+	requestLimit := a.fetchAndUpdateRateLimitPlan(userId)
+	lastSeen := time.Now()
+	if v, found := clients[userId]; found {
+		lastSeen = v.lastSeen
+	}
+	clients[userId] = &client{limiter: rate.NewLimiter(rate.Limit(requestLimit), requestLimit), requestLimit: requestLimit, lastSeen: lastSeen}
+}
+
+// fetchAndUpdateRateLimitPlan fetches and updates the rate limit plan for a user.
+func (a *RequestCrossoverLimiter) fetchAndUpdateRateLimitPlan(userId string) int {
 	requestUrl, err := url.Parse(a.rateLimitPlanLimitUrl)
 	if err != nil {
 		log.Println("HTTPCALLERERRPlan:", err.Error())
-		return err
+		return 0
 	}
 	queryParams := url.Values{}
 	queryParams.Set("userId", userId)
@@ -116,7 +143,7 @@ func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
 	httpReq, err := http.NewRequest(http.MethodGet, requestUrl.String(), nil)
 	if err != nil {
 		fmt.Println("HTTPCALLERERRPlan:", err.Error())
-		return err
+		return 0
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Api-Key", a.apiKey)
@@ -124,57 +151,52 @@ func (a *RequestCrossoverLimiter) RateLimitPlan(userId string) error {
 	httpRes, err := a.client.Do(httpReq)
 	if err != nil {
 		log.Printf("HTTPDOERRPlan: %s", err.Error())
-		return err
+		return 0
 	}
 
 	if httpRes.StatusCode != http.StatusOK {
-		return err
+		return 0
 	}
 
 	body, err := ioutil.ReadAll(httpRes.Body)
 
 	if err != nil {
 		log.Printf("PlanPasreBody: %s", err.Error())
-		return err
+		return 0
 	}
 
 	var response map[string]map[string]int
 	err = json.Unmarshal(body, &response)
 	if err != nil {
 		log.Printf("UNMARSHAERPlan: %s", err.Error())
-		return err
+		return 0
 	}
 
-	//reset usage and limit
-	userUsageLimit[userId] = limitUsage{
-		usage:     0,
-		planLimit: int64(response["data"]["request_limit"]),
-	}
-	log.Println(userUsageLimit)
-
-	return nil
+	return response["data"]["request_limit"]
 }
 
-func (a *RequestCrossoverLimiter) Ticking() {
-	ticker := time.NewTicker(1 * time.Minute)
-	go func() {
-		for {
-			<-ticker.C
-			for k, _ := range userUsageLimit {
-				a.RateLimitPlan(k)
+// cleanUp periodically cleans up idle users and refreshes the rate limit plan for active users.
+func (a *RequestCrossoverLimiter) cleanUp() {
+	for {
+		time.Sleep(1 * time.Minute)
+		for userId, client := range clients {
+			if time.Since(client.lastSeen) > 5*time.Minute {
+				delete(clients, userId)
+			} else {
+				a.setRateLimitPlan(userId)
 			}
-
 		}
-	}()
-}
-func requestKey(pattern string, path string) string {
-	// Compile the regular expression
-	re := regexp.MustCompile(pattern)
-	// Find the first match of the pattern in the URL Path
-	match := re.FindStringSubmatch(path)
-
-	if len(match) == 0 {
-		return ""
 	}
-	return match[0]
+}
+
+// limit checks if the user has exceeded the rate limit.
+func (a *RequestCrossoverLimiter) limit(userId string, requestLimit int) bool {
+	if _, found := clients[userId]; !found {
+		clients[userId] = &client{limiter: rate.NewLimiter(rate.Limit(requestLimit), requestLimit), requestLimit: requestLimit}
+	}
+	clients[userId].lastSeen = time.Now()
+	if !clients[userId].limiter.Allow() {
+		return false
+	}
+	return true
 }
