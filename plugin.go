@@ -92,9 +92,9 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 		return
 	}
 	if !a.limit(userId, a.getRateLimitPlan(userId)) {
-		rw.WriteHeader(http.StatusTooManyRequests)
-		rw.Write([]byte("too many requests"))
-		return
+		//rw.WriteHeader(http.StatusTooManyRequests)
+		//rw.Write([]byte("too many requests"))
+		//return
 	}
 	a.next.ServeHTTP(rw, req)
 }
