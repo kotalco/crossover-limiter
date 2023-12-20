@@ -138,7 +138,7 @@ func (a *RequestCrossoverLimiter) fetchAndUpdateRateLimitPlan(userId string) int
 		return 0
 	}
 	queryParams := url.Values{}
-	queryParams.Set("userId", userId)
+	queryParams.Set("userId", "31ff56b7-56cd-43a0-8cb7-33980f6c3200")
 	requestUrl.RawQuery = queryParams.Encode()
 	httpReq, err := http.NewRequest(http.MethodGet, requestUrl.String(), nil)
 	if err != nil {
@@ -192,7 +192,7 @@ func (a *RequestCrossoverLimiter) cleanUp() {
 // limit checks if the user has exceeded the rate limit.
 func (a *RequestCrossoverLimiter) limit(userId string, requestLimit int) bool {
 	if _, found := clients[userId]; !found {
-		clients[userId] = &client{limiter: rate.NewLimiter(rate.Limit(requestLimit), requestLimit), requestLimit: requestLimit}
+		clients[uuid.NewString()] = &client{limiter: rate.NewLimiter(rate.Limit(requestLimit), requestLimit), requestLimit: requestLimit}
 	}
 	clients[userId].lastSeen = time.Now()
 	if !clients[userId].limiter.Allow() {
