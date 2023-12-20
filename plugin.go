@@ -83,7 +83,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 }
 
 func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	userId := a.extractUserID(req)
+	//userId := a.extractUserID(req)
+	userId := uuid.NewString()
 	if userId == "" {
 		rw.WriteHeader(http.StatusBadRequest)
 		// Write the error message to the response writer
@@ -192,7 +193,7 @@ func (a *RequestCrossoverLimiter) cleanUp() {
 // limit checks if the user has exceeded the rate limit.
 func (a *RequestCrossoverLimiter) limit(userId string, requestLimit int) bool {
 	if _, found := clients[userId]; !found {
-		clients[uuid.NewString()] = &client{limiter: rate.NewLimiter(rate.Limit(requestLimit), requestLimit), requestLimit: requestLimit}
+		clients[userId] = &client{limiter: rate.NewLimiter(rate.Limit(requestLimit), requestLimit), requestLimit: requestLimit}
 	}
 	clients[userId].lastSeen = time.Now()
 	if !clients[userId].limiter.Allow() {
