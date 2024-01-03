@@ -6,29 +6,32 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"golang.org/x/time/rate"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"regexp"
+	"sync"
 	"time"
 )
 
 const (
-	defaultTimeout               = 5
-	defaultAPIKEY                = "c499a9cf54b4f5b8281762802b55462a8d020c835e6795ce4d1b6d268f6e32a5"
-	defaultRateLimitPlanLimitURL = "http://localhost:8083/api/v1/subscriptions/request-limit"
-	defaultGetRequestIdPattern   = "([a-z0-9]{42})"
+	DefaultTimeout           = 5
+	RefreshLastSeenInMinutes = 4
 )
 
-type client struct {
+type user struct {
 	limiter      *rate.Limiter
 	lastSeen     time.Time
 	requestLimit int
 }
+type RateLimitResponse struct {
+	Data struct {
+		RequestLimit int `json:"request_limit"`
+	} `json:"data"`
+}
 
 var (
-	clients = make(map[string]*client)
+	users sync.Map // users is now a sync.Map
 )
 
 // Config holds configuration to passed to the plugin
@@ -40,18 +43,14 @@ type Config struct {
 
 // CreateConfig populates the config data object
 func CreateConfig() *Config {
-	return &Config{
-		RequestIdPattern:      defaultGetRequestIdPattern,
-		RateLimitPlanLimitURL: defaultRateLimitPlanLimitURL,
-		APIKey:                defaultAPIKEY,
-	}
+	return &Config{}
 }
 
 type RequestCrossoverLimiter struct {
 	next                  http.Handler
 	name                  string
-	client                http.Client
-	requestIdPattern      string
+	client                *http.Client
+	compiledPattern       *regexp.Regexp
 	rateLimitPlanLimitUrl string
 	apiKey                string
 }
@@ -68,23 +67,24 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		return nil, fmt.Errorf("RateLimitPlanLimitURL can't be empty")
 	}
 
+	client := &http.Client{
+		Timeout: DefaultTimeout * time.Second,
+	}
+	compiledPattern := regexp.MustCompile(config.RequestIdPattern)
+
 	requestHandler := &RequestCrossoverLimiter{
-		next: next,
-		name: name,
-		client: http.Client{
-			Timeout: defaultTimeout * time.Second,
-		},
-		requestIdPattern:      config.RequestIdPattern,
+		next:                  next,
+		name:                  name,
+		client:                client,
+		compiledPattern:       compiledPattern,
 		rateLimitPlanLimitUrl: config.RateLimitPlanLimitURL,
 		apiKey:                config.APIKey,
 	}
-	go requestHandler.cleanUp()
 	return requestHandler, nil
 }
 
 func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	//userId := a.extractUserID(req)
-	userId := uuid.NewString()
+	userId := a.extractUserID(req.URL.Path)
 	if userId == "" {
 		rw.WriteHeader(http.StatusBadRequest)
 		// Write the error message to the response writer
@@ -100,9 +100,9 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 }
 
 // extractUserID extract user id from the request
-func (a *RequestCrossoverLimiter) extractUserID(req *http.Request) string {
+func (a *RequestCrossoverLimiter) extractUserID(path string) string {
 	// Find the first match of the pattern in the URL Path
-	match := regexp.MustCompile(a.requestIdPattern).FindStringSubmatch(req.URL.Path)
+	match := a.compiledPattern.FindStringSubmatch(path)
 	if len(match) == 0 {
 		return ""
 	}
@@ -115,20 +115,30 @@ func (a *RequestCrossoverLimiter) extractUserID(req *http.Request) string {
 
 // getRateLimitPlan gets the rate limit plan for a user.
 func (a *RequestCrossoverLimiter) getRateLimitPlan(userId string) int {
-	if _, found := clients[userId]; !found {
-		a.setRateLimitPlan(userId)
+	if u, found := users.Load(userId); found {
+		user := u.(*user)
+		return user.requestLimit
 	}
-	return clients[userId].requestLimit
+	// If user is not found, set the rate limit plan.
+	a.setRateLimitPlan(userId) // possible enhancment return user type
+	if u, found := users.Load(userId); found {
+		user := u.(*user)
+		return user.requestLimit
+	}
+	return 0
 }
 
 // setRateLimitPlan fetches and sets the rate limit plan for a user.
 func (a *RequestCrossoverLimiter) setRateLimitPlan(userId string) {
 	requestLimit := a.fetchAndUpdateRateLimitPlan(userId)
 	lastSeen := time.Now()
-	if v, found := clients[userId]; found {
-		lastSeen = v.lastSeen
+
+	u := &user{
+		limiter:      rate.NewLimiter(rate.Limit(requestLimit), requestLimit),
+		requestLimit: requestLimit,
+		lastSeen:     lastSeen,
 	}
-	clients[userId] = &client{limiter: rate.NewLimiter(rate.Limit(requestLimit), requestLimit), requestLimit: requestLimit, lastSeen: lastSeen}
+	users.Store(userId, u)
 }
 
 // fetchAndUpdateRateLimitPlan fetches and updates the rate limit plan for a user.
@@ -150,54 +160,49 @@ func (a *RequestCrossoverLimiter) fetchAndUpdateRateLimitPlan(userId string) int
 	httpReq.Header.Set("X-Api-Key", a.apiKey)
 
 	httpRes, err := a.client.Do(httpReq)
+	defer httpRes.Body.Close()
 	if err != nil {
 		log.Printf("HTTPDOERRPlan: %s", err.Error())
 		return 0
 	}
 
 	if httpRes.StatusCode != http.StatusOK {
+		log.Printf("HTTPDOERRPlanRetrunedStatusCode: %d", httpRes.StatusCode)
 		return 0
 	}
 
-	body, err := ioutil.ReadAll(httpRes.Body)
-
-	if err != nil {
-		log.Printf("PlanPasreBody: %s", err.Error())
-		return 0
-	}
-
-	var response map[string]map[string]int
-	err = json.Unmarshal(body, &response)
-	if err != nil {
+	var response RateLimitResponse
+	if err = json.NewDecoder(httpRes.Body).Decode(&response); err != nil {
 		log.Printf("UNMARSHAERPlan: %s", err.Error())
 		return 0
 	}
 
-	return response["data"]["request_limit"]
-}
-
-// cleanUp periodically cleans up idle users and refreshes the rate limit plan for active users.
-func (a *RequestCrossoverLimiter) cleanUp() {
-	for {
-		time.Sleep(1 * time.Minute)
-		for userId, client := range clients {
-			if time.Since(client.lastSeen) > 5*time.Minute {
-				delete(clients, userId)
-			} else {
-				a.setRateLimitPlan(userId)
-			}
-		}
-	}
+	return response.Data.RequestLimit
 }
 
 // limit checks if the user has exceeded the rate limit.
 func (a *RequestCrossoverLimiter) limit(userId string, requestLimit int) bool {
-	if _, found := clients[userId]; !found {
-		clients[userId] = &client{limiter: rate.NewLimiter(rate.Limit(requestLimit), requestLimit), requestLimit: requestLimit}
+	result, ok := users.Load(userId)
+	if !ok {
+		//store the new user limiter in a non-blocking way
+		limiter := rate.NewLimiter(rate.Limit(requestLimit), requestLimit)
+		users.Store(userId, &user{
+			limiter:      limiter,
+			requestLimit: requestLimit,
+			lastSeen:     time.Now(),
+		})
+		return true
 	}
-	clients[userId].lastSeen = time.Now()
-	if !clients[userId].limiter.Allow() {
-		return false
+
+	u := result.(*user)
+	if u.limiter.Allow() {
+		now := time.Now()
+		if now.Sub(u.lastSeen) > time.Minute*RefreshLastSeenInMinutes { //refresh last seen in an interval less than the interval of clean-ups
+			u.lastSeen = now
+			users.Store(userId, u) //don't store unless very necessary.
+		}
+		return true
 	}
+
 	return true
 }
