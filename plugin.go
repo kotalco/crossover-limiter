@@ -17,7 +17,7 @@ import (
 
 const (
 	DefaultTimeout      = 5
-	UserExpiryInMinutes = 10
+	UserExpiryInMinutes = 1
 )
 
 type User struct {
@@ -89,7 +89,6 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 	userId := a.extractUserID(req.URL.Path)
 	if userId == "" {
 		rw.WriteHeader(http.StatusBadRequest)
-		// Write the error message to the response writer
 		rw.Write([]byte("invalid requestId"))
 		return
 	}
@@ -126,15 +125,15 @@ func (a *RequestCrossoverLimiter) extractUserID(path string) string {
 func (a *RequestCrossoverLimiter) fetchUserPlan(userId string) (int, error) {
 	requestUrl, err := url.Parse(a.rateLimitPlanLimitUrl)
 	if err != nil {
-		log.Println("FetchUserPlan:ParseUrl, ", err.Error())
+		log.Printf("FetchUserPlan:ParseUrl, %s", err.Error())
 		return 0, errors.New("something went worng")
 	}
 	queryParams := url.Values{}
-	queryParams.Set("userId", "31ff56b7-56cd-43a0-8cb7-33980f6c3200")
+	queryParams.Set("userId", userId)
 	requestUrl.RawQuery = queryParams.Encode()
 	httpReq, err := http.NewRequest(http.MethodGet, requestUrl.String(), nil)
 	if err != nil {
-		fmt.Println("FetchUserPlan:NewRequest, ", err.Error())
+		log.Printf("FetchUserPlan:NewRequest, %s", err.Error())
 		return 0, errors.New("something went wrong")
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
