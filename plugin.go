@@ -17,7 +17,7 @@ import (
 
 const (
 	DefaultTimeout      = 5
-	UserExpiryInMinutes = 1
+	UserExpiryInMinutes = 20
 )
 
 type User struct {
