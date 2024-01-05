@@ -16,13 +16,13 @@ import (
 )
 
 const (
-	DefaultTimeout      = 5
-	UserExpiryInMinutes = 20
+	DefaultTimeout                = 5
+	UsersRefreshIntervalInMinutes = 30
 )
 
 type User struct {
+	id           string
 	limiter      *rate.Limiter
-	expiresAt    time.Time
 	requestLimit int
 }
 type RateLimitResponse struct {
@@ -81,6 +81,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		rateLimitPlanLimitUrl: config.RateLimitPlanLimitURL,
 		apiKey:                config.APIKey,
 	}
+	go requestHandler.scheduler(UsersRefreshIntervalInMinutes * time.Minute)
 	return requestHandler, nil
 }
 
@@ -93,12 +94,17 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 		return
 	}
 
-	user, err := a.getUserPlan(userId)
-	if err != nil {
-		rw.WriteHeader(http.StatusInternalServerError)
-		rw.Write([]byte("something went wrong"))
-		return
+	user := a.getUserPlan(userId)
+	if user == nil {
+		requestLimit, err := a.fetchUserPlan(userId)
+		if err != nil {
+			rw.WriteHeader(http.StatusInternalServerError)
+			rw.Write([]byte("something went wrong"))
+			return
+		}
+		user = a.setUserPlan(userId, requestLimit)
 	}
+
 	if !user.limiter.Allow() {
 		rw.WriteHeader(http.StatusTooManyRequests)
 		rw.Write([]byte("too many requests"))
@@ -108,15 +114,15 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 }
 
 // extractUserID extract user id from the request
-func (a *RequestCrossoverLimiter) extractUserID(path string) string {
+func (a *RequestCrossoverLimiter) extractUserID(path string) (userId string) {
 	// Find the first match of the pattern in the URL Path
 	match := a.compiledPattern.FindStringSubmatch(path)
 	if len(match) == 0 {
-		return ""
+		return
 	}
 	parsedUUID, err := uuid.Parse(match[0][10:])
 	if err != nil {
-		return ""
+		return
 	}
 	return parsedUUID.String()
 }
@@ -126,7 +132,7 @@ func (a *RequestCrossoverLimiter) fetchUserPlan(userId string) (int, error) {
 	requestUrl, err := url.Parse(a.rateLimitPlanLimitUrl)
 	if err != nil {
 		log.Printf("FetchUserPlan:ParseUrl, %s", err.Error())
-		return 0, errors.New("something went worng")
+		return 0, errors.New("something went wrong")
 	}
 	queryParams := url.Values{}
 	queryParams.Set("userId", userId)
@@ -161,54 +167,59 @@ func (a *RequestCrossoverLimiter) fetchUserPlan(userId string) (int, error) {
 }
 
 // setUserPlan store user plan to the sync.map
-func (a *RequestCrossoverLimiter) setUserPlan(userId string) (*User, error) {
-	requestLimit, err := a.fetchUserPlan(userId)
-	if err != nil {
-		return nil, err
-	}
+func (a *RequestCrossoverLimiter) setUserPlan(userId string, requestLimit int) *User {
 	u := &User{
 		limiter:      rate.NewLimiter(rate.Limit(requestLimit), requestLimit),
 		requestLimit: requestLimit,
-		expiresAt:    time.Now().Add(UserExpiryInMinutes * time.Minute),
+		id:           userId,
 	}
 	users.Store(userId, u)
-	return u, nil
+	return u
 }
 
 // getUserPlan load user plan from sync.map or set's it if not found
-func (a *RequestCrossoverLimiter) getUserPlan(userId string) (*User, error) {
+func (a *RequestCrossoverLimiter) getUserPlan(userId string) *User {
 	if u, found := users.Load(userId); found {
 		user := u.(*User)
-		if time.Now().After(user.expiresAt) { //refresh user plan in non-blocking way
-			go a.refreshUserPlan(userId)
-		}
-		return user, nil
+		return user
 	}
-
-	return a.setUserPlan(userId)
+	return nil
 }
 
 // refreshUserPlan refreshes the user's rate limit plan
-func (a *RequestCrossoverLimiter) refreshUserPlan(userId string) (*User, error) {
-	requestLimit, err := a.fetchUserPlan(userId)
-	if err != nil {
-		return nil, err
+func (a *RequestCrossoverLimiter) refreshUserPlan(user *User, newRequestLimit int) {
+	if user.requestLimit != newRequestLimit {
+		// update the user's limiter with the new rate limit.
+		user.limiter.SetLimit(rate.Limit(newRequestLimit))
+		user.limiter.SetBurst(newRequestLimit)
+		user.requestLimit = newRequestLimit
+		users.Store(user.id, user)
 	}
-	if u, found := users.Load(userId); found {
+}
+
+// refreshPlansForAllUsers refreshes the rate limit plans for all users in the sync.map
+func (a *RequestCrossoverLimiter) refreshPlansForAllUsers() {
+	users.Range(func(key, u interface{}) bool {
+		userId := key.(string)
 		user := u.(*User)
-		// check if the fetched plan has a different request limit.
-		if user.requestLimit != requestLimit {
-			// update the user's limiter with the new rate limit.
-			user.limiter.SetLimit(rate.Limit(requestLimit))
-			user.limiter.SetBurst(requestLimit)
-			user.requestLimit = requestLimit
-			user.expiresAt = time.Now().Add(UserExpiryInMinutes * time.Minute)
-			users.Store(userId, user)
-			return user, nil
+		newReqLimit, err := a.fetchUserPlan(userId)
+		if err != nil {
+			log.Printf("REFRESH_PLAN_FOR_ALL_USERS: %s", err.Error())
+			return true //continue iteration
 		}
-		return user, nil
-	} else {
-		// if user is not found it could be a new user.
-		return a.setUserPlan(userId)
+		a.refreshUserPlan(user, newReqLimit)
+		return true // continue iteration
+	})
+}
+
+// scheduler starts a periodic refresh of user plans.
+func (a *RequestCrossoverLimiter) scheduler(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			a.refreshPlansForAllUsers()
+		}
 	}
 }
