@@ -180,8 +180,7 @@ func (a *RequestCrossoverLimiter) setUserPlan(userId string, requestLimit int) *
 // getUserPlan load user plan from sync.map or set's it if not found
 func (a *RequestCrossoverLimiter) getUserPlan(userId string) *User {
 	if u, found := users.Load(userId); found {
-		user := u.(*User)
-		return user
+		return u.(*User)
 	}
 	return nil
 }
