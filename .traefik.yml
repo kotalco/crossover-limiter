@@ -8,7 +8,7 @@ summary: "call remote address with requestID and APIkey, don't wait for response
 
 testData:
   #pattern used to extract the requestId from the urlPath
-  RequestIdPattern: "([a-z0-9]{42}"
+  RequestIdPattern: "([a-z0-9]{42})"
   #RemoteAddress the address used to call
   RateLimitPlanLimitURL: "http://localhost:8083/logs"
   #APIKey to validate the request integrity
