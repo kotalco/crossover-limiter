@@ -17,5 +17,5 @@ testData:
   RedisAddress: "123456"
   #RedisAuth to authenticate redis storage
   RedisAuth: "123456"
-  #RedisAuth no of open connections
+  #RedisAuth number of open connections
   RedisPoolSize: 10
