@@ -13,9 +13,9 @@ testData:
   RateLimitPlanLimitURL: "http://localhost:8083/logs"
   #APIKey to validate the request integrity
   APIKey: "c7f1f03dde5fc0cab9aa53081ed08ab797ff54e52e6ff4e9a38e3e092ffcf7c5"
-  #RedisAuth to authenticate redis storage
+  #RedisAddress storage address
   RedisAddress: "123456"
   #RedisAuth to authenticate redis storage
   RedisAuth: "123456"
-  #RedisAuth to authenticate redis storage
+  #RedisAuth no of open connections
   RedisPoolSize: 10
