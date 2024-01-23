@@ -6,40 +6,35 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
-	"golang.org/x/time/rate"
 	"log"
 	"net/http"
 	"net/url"
 	"regexp"
-	"sync"
+	"strconv"
 	"time"
 )
 
 const (
-	DefaultTimeout                = 5
-	UsersRefreshIntervalInMinutes = 30
+	DefaultTimeout       = 5
+	DefaultRedisPoolSize = 10
+	UserPlanKeySuffix    = "-plan"
+	UserRateKeySuffix    = "-rate"
 )
 
-type User struct {
-	id           string
-	limiter      *rate.Limiter
-	requestLimit int
-}
 type RateLimitResponse struct {
 	Data struct {
 		RequestLimit int `json:"request_limit"`
 	} `json:"data"`
 }
 
-var (
-	users sync.Map // users is now a sync.Map
-)
-
 // Config holds configuration to passed to the plugin
 type Config struct {
 	RequestIdPattern      string
 	RateLimitPlanLimitURL string
 	APIKey                string
+	RedisAuth             string
+	RedisAddress          string
+	RedisPoolSize         int
 }
 
 // CreateConfig populates the config data object
@@ -51,9 +46,13 @@ type RequestCrossoverLimiter struct {
 	next                  http.Handler
 	name                  string
 	client                *http.Client
+	redisClient           *RedisClient
 	compiledPattern       *regexp.Regexp
 	rateLimitPlanLimitUrl string
 	apiKey                string
+	redisAuth             string
+	redisAddress          string
+	redisPoolSize         int
 }
 
 // New created a new  plugin.
@@ -67,11 +66,19 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	if len(config.RateLimitPlanLimitURL) == 0 {
 		return nil, fmt.Errorf("RateLimitPlanLimitURL can't be empty")
 	}
+	if len(config.RedisAddress) == 0 {
+		return nil, fmt.Errorf("RedisAddress can't be empty")
+	}
+	if config.RedisPoolSize == 0 {
+		config.RedisPoolSize = DefaultRedisPoolSize
+	}
 
 	client := &http.Client{
 		Timeout: DefaultTimeout * time.Second,
 	}
 	compiledPattern := regexp.MustCompile(config.RequestIdPattern)
+
+	redisClient := NewRedisClient(config.RedisAddress, config.RedisPoolSize, config.RedisAuth)
 
 	requestHandler := &RequestCrossoverLimiter{
 		next:                  next,
@@ -80,8 +87,11 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		compiledPattern:       compiledPattern,
 		rateLimitPlanLimitUrl: config.RateLimitPlanLimitURL,
 		apiKey:                config.APIKey,
+		redisClient:           redisClient,
+		redisAddress:          config.RedisAddress,
+		redisAuth:             config.RedisAuth,
+		redisPoolSize:         config.RedisPoolSize,
 	}
-	go requestHandler.scheduler(UsersRefreshIntervalInMinutes * time.Minute)
 	return requestHandler, nil
 }
 
@@ -93,19 +103,40 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 		rw.Write([]byte("invalid requestId"))
 		return
 	}
-
-	user := a.getUserPlan(userId)
-	if user == nil {
-		requestLimit, err := a.fetchUserPlan(userId)
+	userRequestLimit, err := a.getUserPlan(userId)
+	if err != nil {
+		log.Println(err.Error())
+		rw.WriteHeader(http.StatusInternalServerError)
+		rw.Write([]byte("something went wrong"))
+		return
+	}
+	if userRequestLimit == 0 { //setUserLimit
+		//fetch user plan
+		limit, err := a.fetchUserPlan(userId)
 		if err != nil {
+			log.Println(err.Error())
 			rw.WriteHeader(http.StatusInternalServerError)
 			rw.Write([]byte("something went wrong"))
 			return
 		}
-		user = a.setUserPlan(userId, requestLimit)
+		//set user plan
+		err = a.setUserPlan(userId, limit)
+		if err != nil {
+			log.Println(err.Error())
+			rw.WriteHeader(http.StatusInternalServerError)
+			rw.Write([]byte("something went wrong"))
+			return
+		}
+		userRequestLimit = limit
 	}
-
-	if !user.limiter.Allow() {
+	allow, err := a.rateLimiter(fmt.Sprintf("%s%s", userId, UserRateKeySuffix), userRequestLimit, 1)
+	if err != nil {
+		log.Println(err.Error())
+		rw.WriteHeader(http.StatusInternalServerError)
+		rw.Write([]byte("something went wrong"))
+		return
+	}
+	if !allow {
 		rw.WriteHeader(http.StatusTooManyRequests)
 		rw.Write([]byte("too many requests"))
 		return
@@ -166,59 +197,42 @@ func (a *RequestCrossoverLimiter) fetchUserPlan(userId string) (int, error) {
 	return response.Data.RequestLimit, nil
 }
 
-// setUserPlan store user plan to the sync.map
-func (a *RequestCrossoverLimiter) setUserPlan(userId string, requestLimit int) *User {
-	u := &User{
-		limiter:      rate.NewLimiter(rate.Limit(requestLimit), requestLimit),
-		requestLimit: requestLimit,
-		id:           userId,
-	}
-	users.Store(userId, u)
-	return u
+// setUserPlan store user plan from storage
+func (a *RequestCrossoverLimiter) setUserPlan(userId string, requestLimit int) error {
+	return a.redisClient.Set(fmt.Sprintf("%s%s", userId, UserPlanKeySuffix), strconv.Itoa(requestLimit))
 }
 
-// getUserPlan load user plan from sync.map or set's it if not found
-func (a *RequestCrossoverLimiter) getUserPlan(userId string) *User {
-	if u, found := users.Load(userId); found {
-		return u.(*User)
+// getUserPlan load user plan from storage
+func (a *RequestCrossoverLimiter) getUserPlan(userId string) (int, error) {
+	limitStr, err := a.redisClient.Get(fmt.Sprintf("%s%s", userId, UserPlanKeySuffix))
+	if err != nil {
+		return 0, err
 	}
-	return nil
+	if limitStr == "" {
+		return 0, nil
+	}
+	// Parse the user plan.
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		return 0, errors.New(fmt.Sprintf("can't parse userId: %s, plan coz the err: %s", userId, err.Error()))
+	}
+	return limit, nil
 }
 
-// refreshUserPlan refreshes the user's rate limit plan
-func (a *RequestCrossoverLimiter) refreshUserPlan(user *User, newRequestLimit int) {
-	if user.requestLimit != newRequestLimit {
-		// update the user's limiter with the new rate limit.
-		user.limiter.SetLimit(rate.Limit(newRequestLimit))
-		user.limiter.SetBurst(newRequestLimit)
-		user.requestLimit = newRequestLimit
-		users.Store(user.id, user)
+func (a *RequestCrossoverLimiter) rateLimiter(key string, limit int, window int) (bool, error) {
+	// Increment the counter for the given key.
+	count, err := a.redisClient.Incr(key)
+	if err != nil {
+		return false, err
 	}
-}
-
-// refreshPlansForAllUsers refreshes the rate limit plans for all users in the sync.map
-func (a *RequestCrossoverLimiter) refreshPlansForAllUsers() {
-	users.Range(func(key, u interface{}) bool {
-		userId := key.(string)
-		user := u.(*User)
-		newReqLimit, err := a.fetchUserPlan(userId)
+	if count == 1 {
+		// If the key is new or expired (i.e., count == 1), set the expiration.
+		_, err = a.redisClient.Expire(key, window)
 		if err != nil {
-			log.Printf("REFRESH_PLAN_FOR_ALL_USERS: %s", err.Error())
-			return true //continue iteration
-		}
-		a.refreshUserPlan(user, newReqLimit)
-		return true // continue iteration
-	})
-}
-
-// scheduler starts a periodic refresh of user plans.
-func (a *RequestCrossoverLimiter) scheduler(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			a.refreshPlansForAllUsers()
+			return false, err
 		}
 	}
+
+	// Check against the limit.
+	return count <= limit, nil
 }
