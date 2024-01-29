@@ -56,7 +56,6 @@ type RequestCrossoverLimiter struct {
 	redisAddress          string
 	redisPoolSize         int
 	cacheService          *CacheService
-	cacheExpiry           int
 }
 
 // New created a new  plugin.

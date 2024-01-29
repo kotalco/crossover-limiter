@@ -17,5 +17,7 @@ testData:
   RedisAddress: "123456"
   #RedisAuth to authenticate redis storage
   RedisAuth: "123456"
-  #RedisAuth number of open connections
+  #RedisPoolSize number of open connections
   RedisPoolSize: 10
+  #CacheExpiry response cache expiry in seconds
+  CacheExpiry: 10
