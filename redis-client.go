@@ -158,6 +158,22 @@ func (client *RedisClient) Get(key string) (string, error) {
 	return response, nil
 }
 
+func (client *RedisClient) Delete(key string) error {
+	cmd := fmt.Sprintf("*2\r\n$3\r\nDEL\r\n$%d\r\n%s\r\n", len(key), key)
+	response, err := client.Do(cmd)
+	if err != nil {
+		return err
+	}
+	// DEL will return an integer which is the number of keys removed.
+	// ":1" for successful deletion of one key.
+	// ":0" If the key does not exist
+	if response != ":1" && response != ":0" {
+		return errors.New("unexpected response from server")
+	}
+
+	return nil
+}
+
 func (client *RedisClient) Close() {
 	close(client.pool)
 	for conn := range client.pool {

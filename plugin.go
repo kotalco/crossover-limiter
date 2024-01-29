@@ -53,6 +53,7 @@ type RequestCrossoverLimiter struct {
 	redisAuth             string
 	redisAddress          string
 	redisPoolSize         int
+	cacheService          *CacheService
 }
 
 // New created a new  plugin.
@@ -79,6 +80,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	compiledPattern := regexp.MustCompile(config.RequestIdPattern)
 
 	redisClient := NewRedisClient(config.RedisAddress, config.RedisPoolSize, config.RedisAuth)
+	cacheService := NewCacheService(redisClient, next)
 
 	requestHandler := &RequestCrossoverLimiter{
 		next:                  next,
@@ -91,6 +93,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		redisAddress:          config.RedisAddress,
 		redisAuth:             config.RedisAuth,
 		redisPoolSize:         config.RedisPoolSize,
+		cacheService:          cacheService,
 	}
 	return requestHandler, nil
 }
@@ -141,7 +144,8 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 		rw.Write([]byte("too many requests"))
 		return
 	}
-	a.next.ServeHTTP(rw, req)
+
+	a.cacheService.ServeHTTP(rw, req)
 }
 
 // extractUserID extract user id from the request
