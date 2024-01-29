@@ -5,12 +5,10 @@ import (
 	"encoding/gob"
 	"log"
 	"net/http"
-	"time"
 )
 
-const CacheExpiration = 1 * time.Minute
-
 type CacheService struct {
+	cacheExpiry int
 	redisClient *RedisClient
 	next        http.Handler
 }
@@ -20,10 +18,11 @@ type CachedResponse struct {
 	Body       []byte
 }
 
-func NewCacheService(redisClient *RedisClient, next http.Handler) *CacheService {
+func NewCacheService(cacheExpiry int, redisClient *RedisClient, next http.Handler) *CacheService {
 	// This needs to be called once to register the type if using gob
 	gob.Register(CachedResponse{})
 	return &CacheService{
+		cacheExpiry: cacheExpiry,
 		redisClient: redisClient,
 		next:        next,
 	}
@@ -72,7 +71,7 @@ func (cache *CacheService) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 	}
 
 	// Store the serialized response in Redis as a string with an expiration time
-	if err := cache.redisClient.SetWithTTL(cacheKey, buffer.String(), int(CacheExpiration.Seconds())); err != nil {
+	if err := cache.redisClient.SetWithTTL(cacheKey, buffer.String(), cache.cacheExpiry); err != nil {
 		log.Println("Failed to cache response in Redis:", err)
 	}
 

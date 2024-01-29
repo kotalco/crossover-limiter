@@ -17,6 +17,7 @@ import (
 const (
 	DefaultTimeout       = 5
 	DefaultRedisPoolSize = 10
+	DefaultCacheExpiry   = 10
 	UserPlanKeySuffix    = "-plan"
 	UserRateKeySuffix    = "-rate"
 )
@@ -35,6 +36,7 @@ type Config struct {
 	RedisAuth             string
 	RedisAddress          string
 	RedisPoolSize         int
+	CacheExpiry           int //in seconds
 }
 
 // CreateConfig populates the config data object
@@ -54,6 +56,7 @@ type RequestCrossoverLimiter struct {
 	redisAddress          string
 	redisPoolSize         int
 	cacheService          *CacheService
+	cacheExpiry           int
 }
 
 // New created a new  plugin.
@@ -73,6 +76,9 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	if config.RedisPoolSize == 0 {
 		config.RedisPoolSize = DefaultRedisPoolSize
 	}
+	if config.CacheExpiry == 0 {
+		config.CacheExpiry = DefaultCacheExpiry
+	}
 
 	client := &http.Client{
 		Timeout: DefaultTimeout * time.Second,
@@ -80,7 +86,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	compiledPattern := regexp.MustCompile(config.RequestIdPattern)
 
 	redisClient := NewRedisClient(config.RedisAddress, config.RedisPoolSize, config.RedisAuth)
-	cacheService := NewCacheService(redisClient, next)
+	cacheService := NewCacheService(config.CacheExpiry, redisClient, next)
 
 	requestHandler := &RequestCrossoverLimiter{
 		next:                  next,
