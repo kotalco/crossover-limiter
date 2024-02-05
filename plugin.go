@@ -2,13 +2,12 @@ package crossover_limiter
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/kotalco/resp"
 	"log"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strconv"
 	"time"
@@ -17,8 +16,6 @@ import (
 const (
 	DefaultTimeout       = 5
 	DefaultRedisPoolSize = 10
-	DefaultCacheExpiry   = 10
-	UserPlanKeySuffix    = "-plan"
 	UserRateKeySuffix    = "-rate"
 )
 
@@ -36,7 +33,6 @@ type Config struct {
 	RedisAuth             string
 	RedisAddress          string
 	RedisPoolSize         int
-	CacheExpiry           int //in seconds
 }
 
 // CreateConfig populates the config data object
@@ -48,14 +44,13 @@ type RequestCrossoverLimiter struct {
 	next                  http.Handler
 	name                  string
 	client                *http.Client
-	redisClient           *RedisClient
+	resp                  resp.IClient
 	compiledPattern       *regexp.Regexp
 	rateLimitPlanLimitUrl string
 	apiKey                string
-	redisAuth             string
 	redisAddress          string
+	redisAuth             string
 	redisPoolSize         int
-	cacheService          *CacheService
 }
 
 // New created a new  plugin.
@@ -75,17 +70,16 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	if config.RedisPoolSize == 0 {
 		config.RedisPoolSize = DefaultRedisPoolSize
 	}
-	if config.CacheExpiry == 0 {
-		config.CacheExpiry = DefaultCacheExpiry
-	}
 
 	client := &http.Client{
 		Timeout: DefaultTimeout * time.Second,
 	}
 	compiledPattern := regexp.MustCompile(config.RequestIdPattern)
 
-	redisClient := NewRedisClient(config.RedisAddress, config.RedisPoolSize, config.RedisAuth)
-	cacheService := NewCacheService(config.CacheExpiry, redisClient, next)
+	redisClient, err := resp.NewRedisClient(config.RedisAddress, config.RedisPoolSize, config.RedisAuth)
+	if err != nil {
+		return nil, fmt.Errorf("can't create redis client")
+	}
 
 	requestHandler := &RequestCrossoverLimiter{
 		next:                  next,
@@ -94,11 +88,10 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		compiledPattern:       compiledPattern,
 		rateLimitPlanLimitUrl: config.RateLimitPlanLimitURL,
 		apiKey:                config.APIKey,
-		redisClient:           redisClient,
+		resp:                  redisClient,
 		redisAddress:          config.RedisAddress,
 		redisAuth:             config.RedisAuth,
 		redisPoolSize:         config.RedisPoolSize,
-		cacheService:          cacheService,
 	}
 	return requestHandler, nil
 }
@@ -111,33 +104,21 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 		rw.Write([]byte("invalid requestId"))
 		return
 	}
-	userRequestLimit, err := a.getUserPlan(userId)
+	userRequestLimit, err := a.getUserPlan(req.Context(), userId)
 	if err != nil {
 		log.Println(err.Error())
 		rw.WriteHeader(http.StatusInternalServerError)
-		rw.Write([]byte("something went wrong"))
+		rw.Write([]byte(err.Error()))
 		return
 	}
-	if userRequestLimit == 0 { //setUserLimit
-		//fetch user plan
-		limit, err := a.fetchUserPlan(userId)
-		if err != nil {
-			log.Println(err.Error())
-			rw.WriteHeader(http.StatusInternalServerError)
-			rw.Write([]byte("something went wrong"))
-			return
-		}
-		//set user plan
-		err = a.setUserPlan(userId, limit)
-		if err != nil {
-			log.Println(err.Error())
-			rw.WriteHeader(http.StatusInternalServerError)
-			rw.Write([]byte("something went wrong"))
-			return
-		}
-		userRequestLimit = limit
+	if userRequestLimit == nil {
+		log.Println("can't get user plan")
+		rw.WriteHeader(http.StatusNotFound)
+		rw.Write([]byte("can't get user plan"))
+		return
 	}
-	allow, err := a.rateLimiter(fmt.Sprintf("%s%s", userId, UserRateKeySuffix), userRequestLimit, 1)
+
+	allow, err := a.rateLimiter(req.Context(), fmt.Sprintf("%s%s", userId, UserRateKeySuffix), *userRequestLimit, 1)
 	if err != nil {
 		log.Println(err.Error())
 		rw.WriteHeader(http.StatusInternalServerError)
@@ -150,7 +131,7 @@ func (a *RequestCrossoverLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Re
 		return
 	}
 
-	a.cacheService.ServeHTTP(rw, req)
+	a.next.ServeHTTP(rw, req)
 }
 
 // extractUserID extract user id from the request
@@ -167,76 +148,39 @@ func (a *RequestCrossoverLimiter) extractUserID(path string) (userId string) {
 	return parsedUUID.String()
 }
 
-// fetchUserPlan fetches user plan from third-party.
-func (a *RequestCrossoverLimiter) fetchUserPlan(userId string) (int, error) {
-	requestUrl, err := url.Parse(a.rateLimitPlanLimitUrl)
-	if err != nil {
-		log.Printf("FetchUserPlan:ParseUrl, %s", err.Error())
-		return 0, errors.New("something went wrong")
-	}
-	queryParams := url.Values{}
-	queryParams.Set("userId", userId)
-	requestUrl.RawQuery = queryParams.Encode()
-	httpReq, err := http.NewRequest(http.MethodGet, requestUrl.String(), nil)
-	if err != nil {
-		log.Printf("FetchUserPlan:NewRequest, %s", err.Error())
-		return 0, errors.New("something went wrong")
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Api-Key", a.apiKey)
-
-	httpRes, err := a.client.Do(httpReq)
-	defer httpRes.Body.Close()
-	if err != nil {
-		log.Printf("FetchUserPlan:Do, %s", err.Error())
-		return 0, errors.New("something went wrong")
-	}
-
-	if httpRes.StatusCode != http.StatusOK {
-		log.Printf("FetchUserPlan:InvalidStatusCode: %d", httpRes.StatusCode)
-		return 0, errors.New("something went wrong")
-	}
-
-	var response RateLimitResponse
-	if err = json.NewDecoder(httpRes.Body).Decode(&response); err != nil {
-		log.Printf("FetchUserPlan:UNMARSHAERPlan, %s", err.Error())
-		return 0, errors.New("something went wrong")
-	}
-
-	return response.Data.RequestLimit, nil
-}
-
 // setUserPlan store user plan from storage
-func (a *RequestCrossoverLimiter) setUserPlan(userId string, requestLimit int) error {
-	return a.redisClient.Set(fmt.Sprintf("%s%s", userId, UserPlanKeySuffix), strconv.Itoa(requestLimit))
+func (a *RequestCrossoverLimiter) setUserPlan(ctx context.Context, userId string, requestLimit int) error {
+	return a.resp.Set(ctx, userId, strconv.Itoa(requestLimit))
 }
 
 // getUserPlan load user plan from storage
-func (a *RequestCrossoverLimiter) getUserPlan(userId string) (int, error) {
-	limitStr, err := a.redisClient.Get(fmt.Sprintf("%s%s", userId, UserPlanKeySuffix))
+func (a *RequestCrossoverLimiter) getUserPlan(ctx context.Context, userId string) (*int, error) {
+	log.Println(userId)
+	limitStr, err := a.resp.Get(ctx, userId)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if limitStr == "" {
-		return 0, nil
+		return nil, errors.New("can't find user plan")
 	}
 	// Parse the user plan.
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil {
-		return 0, errors.New(fmt.Sprintf("can't parse userId: %s, plan coz the err: %s", userId, err.Error()))
+		return nil, errors.New(fmt.Sprintf("can't parse userId: %s, plan coz the err: %s", userId, err.Error()))
 	}
-	return limit, nil
+
+	return &limit, nil
 }
 
-func (a *RequestCrossoverLimiter) rateLimiter(key string, limit int, window int) (bool, error) {
+func (a *RequestCrossoverLimiter) rateLimiter(ctx context.Context, key string, limit int, window int) (bool, error) {
 	// Increment the counter for the given key.
-	count, err := a.redisClient.Incr(key)
+	count, err := a.resp.Incr(ctx, key)
 	if err != nil {
 		return false, err
 	}
 	if count == 1 {
 		// If the key is new or expired (i.e., count == 1), set the expiration.
-		_, err = a.redisClient.Expire(key, window)
+		_, err = a.resp.Expire(ctx, key, window)
 		if err != nil {
 			return false, err
 		}

@@ -4,7 +4,7 @@ iconPath: .assets/icon.png
 
 import: github.com/kotalco/crossover-limiter
 
-summary: "call remote address with requestID and APIkey, don't wait for response"
+summary: "RESP powered rate limiter middleware for Traefik"
 
 testData:
   #pattern used to extract the requestId from the urlPath
@@ -14,10 +14,8 @@ testData:
   #APIKey to validate the request integrity
   APIKey: "c7f1f03dde5fc0cab9aa53081ed08ab797ff54e52e6ff4e9a38e3e092ffcf7c5"
   #RedisAddress storage address
-  RedisAddress: "123456"
+  RedisAddress: "localhost:6379"
   #RedisAuth to authenticate redis storage
   RedisAuth: "123456"
   #RedisPoolSize number of open connections
   RedisPoolSize: 10
-  #CacheExpiry response cache expiry in seconds
-  CacheExpiry: 10

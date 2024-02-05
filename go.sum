@@ -1,4 +1,6 @@
 github.com/google/uuid v1.3.1 h1:KjJaJ9iWZ3jOFZIf1Lqf4laDRCasjl0BCmnEGxkdLb4=
 github.com/google/uuid v1.3.1/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-golang.org/x/time v0.4.0 h1:Z81tqI5ddIoXDPvVQ7/7CC9TnLM7ubaFG2qXYd5BbYY=
-golang.org/x/time v0.4.0/go.mod h1:3BpzKBy/shNhVucY/MWOyx10tF3SFh9QdLuxbVysPQM=
+github.com/kotalco/resp v0.0.0-20240205115023-ae09811474a1 h1:fbVPjYVvLTtOmbhRcQDkW4hwh09nOcejXKjsPCcSR3M=
+github.com/kotalco/resp v0.0.0-20240205115023-ae09811474a1/go.mod h1:E3GFMlS/NGkWPAmS/Ad9h5pWdtgu3/FuE+clsqqFSzs=
+github.com/kotalco/resp-redis v0.0.0-20240204172620-6e44549644c5 h1:OsN2X2NDTLadddzDDaZBPdaH+d6L6VjYqST+QePY5Hg=
+github.com/kotalco/resp-redis v0.0.0-20240204172620-6e44549644c5/go.mod h1:8zvtqvsAmcwA0BVsIYWKs3MhrG26DLLu3+3YbGfm35s=
