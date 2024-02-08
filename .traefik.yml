@@ -9,6 +9,10 @@ summary: "RESP powered rate limiter middleware for Traefik"
 testData:
   #pattern used to extract the requestId from the urlPath
   RequestIdPattern: "([a-z0-9]{42})"
+  #RemoteAddress the address used to call
+  RateLimitPlanLimitURL: "http://localhost:8083/logs"
+  #APIKey to validate the request integrity
+  APIKey: "c7f1f03dde5fc0cab9aa53081ed08ab797ff54e52e6ff4e9a38e3e092ffcf7c5"
   #RedisAddress storage address
   RedisAddress: "localhost:6379"
   #RedisAuth to authenticate redis storage
