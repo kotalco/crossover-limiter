@@ -1,8 +1,6 @@
-# github.com/gomodule/redigo v1.8.9
-## explicit; go 1.16
 # github.com/google/uuid v1.3.1
 ## explicit
 github.com/google/uuid
-# golang.org/x/time v0.4.0
-## explicit; go 1.18
-golang.org/x/time/rate
+# github.com/kotalco/resp v0.0.0-20240205115023-ae09811474a1
+## explicit; go 1.21.6
+github.com/kotalco/resp
