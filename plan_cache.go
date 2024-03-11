@@ -17,13 +17,9 @@ type PlanCache struct {
 	resp resp.IClient
 }
 
-func NewPlanCache(address string, auth string, poolSize int) IPlanCache {
-	// ignore error check to run the plugin with Yaegi
-	// before plugin get loaded into traefik catalog it get checked with Yaegi which don't have redis-server
-	redisClient, _ := resp.NewRedisClient(address, poolSize, auth)
-
+func NewPlanCache(client resp.IClient) IPlanCache {
 	return &PlanCache{
-		resp: redisClient,
+		resp: client,
 	}
 }
 
