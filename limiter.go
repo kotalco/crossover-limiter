@@ -76,6 +76,8 @@ func (a *Limiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		rw.Write([]byte("something went wrong"))
 		return
 	}
+	log.Println("RespClient", respClient)
+	log.Println(respClient.Ping(req.Context()))
 	defer respClient.Close()
 
 	planCache := NewPlanCache(respClient)
